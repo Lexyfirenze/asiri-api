@@ -1,24 +1,24 @@
-app.get('/', (req, res) => {
-  res.send('Aṣịrị API Service is running!');
-});
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 
+// 1. Initialize express app FIRST
 const app = express();
+
+// 2. Configure middleware
 app.use(cors());
 app.use(express.json());
 
+// 3. Configure database pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
-// Root health check
+// 4. Declare routes
 app.get('/', (req, res) => {
   res.send('Aṣịrị API Service is running!');
 });
 
-// Fetch feed posts
 app.get('/api/feed', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM posts ORDER BY created_at DESC LIMIT 20');
@@ -28,6 +28,7 @@ app.get('/api/feed', async (req, res) => {
   }
 });
 
+// 5. Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
