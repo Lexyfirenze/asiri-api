@@ -1,3 +1,6 @@
+// Force Node to accept self-signed / pooler certificates globally
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -7,7 +10,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configure pool with ssl object setting rejectUnauthorized to false
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
