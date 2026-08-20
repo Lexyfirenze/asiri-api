@@ -2,11 +2,18 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Configure Multer memory storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://nrjevwkrhkqzsjoptwda.supabase.co';
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -32,6 +39,42 @@ app.get('/', (req, res) => {
   res.send('Aṣịrị API Service operational!');
 });
 
+// --- MEDIA UPLOADS ---
+
+app.post('/api/upload', authenticateToken, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    const file = req.file;
+    const fileExt = file.originalname.split('.').pop();
+    const fileName = `${req.user.id}/${Date.now()}.${fileExt}`;
+
+    // Upload buffer to Supabase Storage bucket 'media'
+    const { data, error } = await supabase.storage
+      .from('media')
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    // Retrieve Public URL
+    const { data: urlData } = supabase.storage
+      .from('media')
+      .getPublicUrl(fileName);
+
+    res.json({
+      success: true,
+      url: urlData.publicUrl
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // --- AUTHENTICATION ---
 
 app.post('/api/auth/signup', async (req, res) => {
@@ -42,7 +85,6 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    // Hash password with salt round 10
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const { data: user, error: userError } = await supabase
@@ -87,7 +129,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials.' });
     }
 
-    // Secure password comparison
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Invalid credentials.' });
@@ -139,7 +180,7 @@ app.get('/api/feed', async (req, res) => {
     const { data: posts, error } = await supabase
       .from('posts')
       .select(`
-        id, title, content, used_identity, upvote_count, downvote_count, score, comment_count, created_at,
+        id, title, content, media_urls, used_identity, upvote_count, downvote_count, score, comment_count, created_at,
         nodes ( name ),
         profiles!posts_author_id_fkey ( username, asiri_handle, display_name, avatar_url )
       `)
@@ -156,6 +197,7 @@ app.get('/api/feed', async (req, res) => {
         id: post.id,
         title: post.title,
         content: post.content,
+        media_urls: post.media_urls,
         used_identity: post.used_identity,
         upvote_count: post.upvote_count,
         downvote_count: post.downvote_count,
