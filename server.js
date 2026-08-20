@@ -31,7 +31,8 @@ app.get('/', (req, res) => {
   res.send('Aṣịrị API Service operational!');
 });
 
-// POST /api/auth/signup
+// --- AUTHENTICATION ---
+
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password, display_name, username, asiri_handle } = req.body;
 
@@ -40,16 +41,14 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    // 1. Insert User
     const { data: user, error: userError } = await supabase
       .from('users')
-      .insert([{ email, password_hash: password }]) // Password hashing should be applied on client/middleware
+      .insert([{ email, password_hash: password }])
       .select('id, email')
       .single();
 
     if (userError) throw userError;
 
-    // 2. Insert Profile
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .insert([{
@@ -70,7 +69,6 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -92,7 +90,40 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// GET /api/feed
+// --- PROFILES ---
+
+app.get('/api/profiles/me', authenticateToken, async (req, res) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (error) throw error;
+    res.json({ success: true, profile });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/profiles/:username', async (req, res) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('display_name, username, avatar_url, created_at')
+      .eq('username', req.params.username)
+      .single();
+
+    if (error || !profile) return res.status(404).json({ success: false, error: 'User not found.' });
+    res.json({ success: true, profile });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- FEED & POSTS ---
+
 app.get('/api/feed', async (req, res) => {
   try {
     const { data: posts, error } = await supabase
@@ -134,7 +165,6 @@ app.get('/api/feed', async (req, res) => {
   }
 });
 
-// POST /api/posts
 app.post('/api/posts', authenticateToken, async (req, res) => {
   const { node_id, used_identity, title, content, media_urls } = req.body;
 
@@ -163,7 +193,91 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/posts/:id/comments
+// --- NODES (Sub-communities) ---
+
+app.get('/api/nodes', async (req, res) => {
+  try {
+    const { data: nodes, error } = await supabase
+      .from('nodes')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ success: true, nodes });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/nodes', authenticateToken, async (req, res) => {
+  const { name, title, description, icon_url } = req.body;
+
+  if (!name || !title) {
+    return res.status(400).json({ error: 'Node name and title are required.' });
+  }
+
+  try {
+    const { data: node, error } = await supabase
+      .from('nodes')
+      .insert([{
+        name,
+        title,
+        description,
+        icon_url,
+        created_by: req.user.id
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Automatically assign creator as admin member
+    await supabase
+      .from('node_memberships')
+      .insert([{ node_id: node.id, user_id: req.user.id, role: 'admin' }]);
+
+    res.status(201).json({ success: true, node });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/nodes/:id/join', authenticateToken, async (req, res) => {
+  const nodeId = req.params.id;
+
+  try {
+    // Check existing membership
+    const { data: existing } = await supabase
+      .from('node_memberships')
+      .select('*')
+      .eq('node_id', nodeId)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (existing) {
+      // Leave node
+      await supabase
+        .from('node_memberships')
+        .delete()
+        .eq('node_id', nodeId)
+        .eq('user_id', req.user.id);
+
+      return res.json({ success: true, joined: false, message: 'Left node.' });
+    } else {
+      // Join node
+      await supabase
+        .from('node_memberships')
+        .insert([{ node_id: nodeId, user_id: req.user.id, role: 'member' }]);
+
+      return res.json({ success: true, joined: true, message: 'Joined node.' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- COMMENTS ---
+
 app.get('/api/posts/:id/comments', async (req, res) => {
   try {
     const { data: comments, error } = await supabase
@@ -202,7 +316,6 @@ app.get('/api/posts/:id/comments', async (req, res) => {
   }
 });
 
-// POST /api/posts/:id/comments
 app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
   const { parent_id, used_identity, content } = req.body;
 
@@ -230,7 +343,8 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/posts/:id/vote
+// --- VOTING ---
+
 app.post('/api/posts/:id/vote', authenticateToken, async (req, res) => {
   const postId = req.params.id;
   const { vote_value } = req.body;
