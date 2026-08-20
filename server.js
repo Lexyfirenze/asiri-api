@@ -9,10 +9,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configure Multer memory storage
+// Configure Multer memory storage (5MB max)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://nrjevwkrhkqzsjoptwda.supabase.co';
@@ -21,7 +21,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'asiri_super_secret_key';
 
-// Middleware: Authenticate Request
+// Middleware: Authenticate JWT Token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -51,7 +51,6 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
     const fileExt = file.originalname.split('.').pop();
     const fileName = `${req.user.id}/${Date.now()}.${fileExt}`;
 
-    // Upload buffer to Supabase Storage bucket 'media'
     const { data, error } = await supabase.storage
       .from('media')
       .upload(fileName, file.buffer, {
@@ -61,7 +60,6 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
 
     if (error) throw error;
 
-    // Retrieve Public URL
     const { data: urlData } = supabase.storage
       .from('media')
       .getPublicUrl(fileName);
