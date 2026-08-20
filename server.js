@@ -7,7 +7,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Supabase via HTTPS SDK
 const supabaseUrl = process.env.SUPABASE_URL || 'https://nrjevwkrhkqzsjoptwda.supabase.co';
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -27,35 +26,87 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// GET /api/feed - Fetch unified feed with handle privacy checks
+// Root endpoint
+app.get('/', (req, res) => {
+  res.send('Aṣịrị API Service operational!');
+});
+
+// POST /api/auth/signup
+app.post('/api/auth/signup', async (req, res) => {
+  const { email, password, display_name, username, asiri_handle } = req.body;
+
+  if (!email || !password || !username || !asiri_handle) {
+    return res.status(400).json({ error: 'Missing required signup fields.' });
+  }
+
+  try {
+    // 1. Insert User
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .insert([{ email, password_hash: password }]) // Password hashing should be applied on client/middleware
+      .select('id, email')
+      .single();
+
+    if (userError) throw userError;
+
+    // 2. Insert Profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .insert([{
+        user_id: user.id,
+        display_name: display_name || username,
+        username,
+        asiri_handle
+      }])
+      .select()
+      .single();
+
+    if (profileError) throw profileError;
+
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ success: true, token, user, profile });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, password_hash')
+      .eq('email', email)
+      .single();
+
+    if (error || !user || user.password_hash !== password) {
+      return res.status(401).json({ success: false, error: 'Invalid credentials.' });
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, user: { id: user.id, email: user.email } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/feed
 app.get('/api/feed', async (req, res) => {
   try {
     const { data: posts, error } = await supabase
       .from('posts')
       .select(`
-        id,
-        title,
-        content,
-        used_identity,
-        upvote_count,
-        downvote_count,
-        score,
-        comment_count,
-        created_at,
+        id, title, content, used_identity, upvote_count, downvote_count, score, comment_count, created_at,
         nodes ( name ),
-        profiles!posts_author_id_fkey (
-          username,
-          asiri_handle,
-          display_name,
-          avatar_url
-        )
+        profiles!posts_author_id_fkey ( username, asiri_handle, display_name, avatar_url )
       `)
       .order('created_at', { ascending: false })
       .limit(30);
 
     if (error) throw error;
 
-    // Apply identity privacy transformation
     const sanitizedPosts = posts.map(post => {
       const isPublic = post.used_identity === 'public';
       const profile = post.profiles || {};
@@ -83,7 +134,7 @@ app.get('/api/feed', async (req, res) => {
   }
 });
 
-// POST /api/posts - Create new post
+// POST /api/posts
 app.post('/api/posts', authenticateToken, async (req, res) => {
   const { node_id, used_identity, title, content, media_urls } = req.body;
 
@@ -94,50 +145,106 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('posts')
-      .insert([
-        {
-          author_id: req.user.id,
-          node_id: node_id || null,
-          used_identity,
-          title,
-          content,
-          media_urls: media_urls || []
-        }
-      ])
+      .insert([{
+        author_id: req.user.id,
+        node_id: node_id || null,
+        used_identity,
+        title,
+        content,
+        media_urls: media_urls || []
+      }])
       .select()
       .single();
 
     if (error) throw error;
-
     res.status(201).json({ success: true, post: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /api/posts/:id/vote - Upvote or Downvote a post
+// GET /api/posts/:id/comments
+app.get('/api/posts/:id/comments', async (req, res) => {
+  try {
+    const { data: comments, error } = await supabase
+      .from('comments')
+      .select(`
+        id, post_id, parent_id, content, used_identity, score, path, created_at,
+        profiles!comments_author_id_fkey ( username, asiri_handle, display_name, avatar_url )
+      `)
+      .eq('post_id', req.params.id)
+      .order('path', { ascending: true });
+
+    if (error) throw error;
+
+    const sanitizedComments = comments.map(comment => {
+      const isPublic = comment.used_identity === 'public';
+      const profile = comment.profiles || {};
+
+      return {
+        id: comment.id,
+        post_id: comment.post_id,
+        parent_id: comment.parent_id,
+        content: comment.content,
+        used_identity: comment.used_identity,
+        score: comment.score,
+        path: comment.path,
+        created_at: comment.created_at,
+        author_handle: isPublic ? profile.username : profile.asiri_handle,
+        author_display_name: isPublic ? profile.display_name : 'Aṣịrị User',
+        author_avatar: isPublic ? profile.avatar_url : null
+      };
+    });
+
+    res.json({ success: true, comments: sanitizedComments });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/posts/:id/comments
+app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
+  const { parent_id, used_identity, content } = req.body;
+
+  if (!['public', 'pseudonymous'].includes(used_identity)) {
+    return res.status(400).json({ error: 'Invalid identity mode.' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('comments')
+      .insert([{
+        post_id: req.params.id,
+        author_id: req.user.id,
+        parent_id: parent_id || null,
+        used_identity,
+        content
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ success: true, comment: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/posts/:id/vote
 app.post('/api/posts/:id/vote', authenticateToken, async (req, res) => {
   const postId = req.params.id;
-  const { vote_value } = req.body; // 1 for upvote, -1 for downvote
+  const { vote_value } = req.body;
 
   if (![1, -1].includes(vote_value)) {
     return res.status(400).json({ error: 'Vote value must be 1 or -1' });
   }
 
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('post_votes')
-      .upsert(
-        {
-          post_id: postId,
-          user_id: req.user.id,
-          vote_value
-        },
-        { onConflict: 'post_id,user_id' }
-      );
+      .upsert({ post_id: postId, user_id: req.user.id, vote_value }, { onConflict: 'post_id,user_id' });
 
     if (error) throw error;
-
     res.json({ success: true, message: 'Vote recorded' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
