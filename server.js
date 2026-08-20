@@ -7,8 +7,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const supabaseUrl = process.env.SUPABASE_URL;
+// Hardcoded fallback for URL guarantees createClient never receives an undefined URL
+const supabaseUrl = process.env.SUPABASE_URL || 'https://nrjevwkrhkqzsjoptwda.supabase.co';
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 app.get('/', (req, res) => {
