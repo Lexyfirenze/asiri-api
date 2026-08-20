@@ -1,21 +1,16 @@
-// Force Node to accept self-signed / pooler certificates globally
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const express = require('express');
-const { Pool } = require('pg');
 const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
+// Initialize Supabase via HTTPS REST API
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 app.get('/', (req, res) => {
   res.send('Aṣịrị API Service is running!');
@@ -23,8 +18,14 @@ app.get('/', (req, res) => {
 
 app.get('/api/feed', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM posts ORDER BY created_at DESC LIMIT 20');
-    res.json({ success: true, posts: rows });
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    res.json({ success: true, posts: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
