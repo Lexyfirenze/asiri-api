@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -41,9 +42,12 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
+    // Hash password with salt round 10
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const { data: user, error: userError } = await supabase
       .from('users')
-      .insert([{ email, password_hash: password }])
+      .insert([{ email, password_hash: hashedPassword }])
       .select('id, email')
       .single();
 
@@ -79,7 +83,13 @@ app.post('/api/auth/login', async (req, res) => {
       .eq('email', email)
       .single();
 
-    if (error || !user || user.password_hash !== password) {
+    if (error || !user) {
+      return res.status(401).json({ success: false, error: 'Invalid credentials.' });
+    }
+
+    // Secure password comparison
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Invalid credentials.' });
     }
 
@@ -231,7 +241,6 @@ app.post('/api/nodes', authenticateToken, async (req, res) => {
 
     if (error) throw error;
 
-    // Automatically assign creator as admin member
     await supabase
       .from('node_memberships')
       .insert([{ node_id: node.id, user_id: req.user.id, role: 'admin' }]);
@@ -246,7 +255,6 @@ app.post('/api/nodes/:id/join', authenticateToken, async (req, res) => {
   const nodeId = req.params.id;
 
   try {
-    // Check existing membership
     const { data: existing } = await supabase
       .from('node_memberships')
       .select('*')
@@ -255,7 +263,6 @@ app.post('/api/nodes/:id/join', authenticateToken, async (req, res) => {
       .single();
 
     if (existing) {
-      // Leave node
       await supabase
         .from('node_memberships')
         .delete()
@@ -264,7 +271,6 @@ app.post('/api/nodes/:id/join', authenticateToken, async (req, res) => {
 
       return res.json({ success: true, joined: false, message: 'Left node.' });
     } else {
-      // Join node
       await supabase
         .from('node_memberships')
         .insert([{ node_id: nodeId, user_id: req.user.id, role: 'member' }]);
