@@ -10,21 +10,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// In-memory posts fallback if Supabase posts table isn't created yet
-let posts = [
-  {
-    id: '1',
-    author: 'Aṣịrị Team',
-    handle: '@asiri_app',
-    content: 'Welcome to Aṣịrị! Post your first update below.',
-    time: '1h',
-    likes: 5,
-    reposts: 2,
-    replies: 1
-  }
-];
-
-// Register
+// Auth Endpoints
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, display_name, displayName } = req.body;
   const name = display_name || displayName || email.split('@')[0];
@@ -43,7 +29,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -61,29 +46,62 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Get Posts Feed
-app.get('/api/posts', (req, res) => {
-  res.status(200).json({ success: true, posts });
+// GET All Posts from Supabase
+app.get('/api/posts', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.status(200).json({ success: true, posts: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-// Create Post
-app.post('/api/posts', (req, res) => {
+// CREATE Post in Supabase
+app.post('/api/posts', async (req, res) => {
   const { author, handle, content } = req.body;
   if (!content) return res.status(400).json({ success: false, error: 'Content is required' });
 
-  const newPost = {
-    id: Date.now().toString(),
-    author: author || 'Anonymous',
-    handle: handle || '@user',
-    content,
-    time: 'Just now',
-    likes: 0,
-    reposts: 0,
-    replies: 0
-  };
+  try {
+    const { data, error } = await supabase
+      .from('posts')
+      .insert([{ author: author || 'Anonymous', handle: handle || '@user', content }])
+      .select();
 
-  posts.unshift(newPost);
-  res.status(201).json({ success: true, post: newPost });
+    if (error) throw error;
+    res.status(201).json({ success: true, post: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// LIKE Post
+app.post('/api/posts/:id/like', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { data: post, error: fetchErr } = await supabase
+      .from('posts')
+      .select('likes')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ likes: (post.likes || 0) + 1 })
+      .eq('id', id)
+      .select();
+
+    if (error) throw error;
+    res.status(200).json({ success: true, post: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 10000;
